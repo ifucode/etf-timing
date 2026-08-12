@@ -1,0 +1,11 @@
+# WorkBuddy 本地记忆与运行缓存（含个人信息，切勿上传）
+.workbuddy/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+
+# 本地日志
+*.log

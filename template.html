@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ETF择时</title>
+<style>
+:root{--bg:#fff;--fg:#1a1a1a;--muted:#888;--line:#e6e6e6;--hdr:#fafafa;}
+*{box-sizing:border-box;}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft Yahei",sans-serif;background:var(--bg);color:var(--fg);font-size:13px;}
+header{padding:14px 18px;border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba(255,255,255,.96);backdrop-filter:blur(6px);z-index:5;}
+h1{font-size:17px;margin:0 0 4px;}
+.desc{color:var(--muted);font-size:12px;margin:4px 0 8px;line-height:1.5;}
+.desc code{background:#f3f3f3;padding:1px 4px;border-radius:4px;font-size:11px;}
+.bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:12px;}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;background:#eef;color:#225;}
+.badge.live{background:#fee;color:#c22;}
+button{cursor:pointer;border:1px solid #ccc;background:#fff;border-radius:6px;padding:4px 12px;font-size:12px;}
+button:hover{background:#f3f3f3;}
+#status{padding:10px 18px;color:var(--muted);font-size:12px;}
+.wrap{overflow:auto;max-height:calc(100vh - 150px);padding:0 18px 24px;}
+table{border-collapse:collapse;font-size:11px;white-space:nowrap;}
+th,td{border:1px solid var(--line);padding:3px 5px;text-align:center;height:26px;}
+thead th{position:sticky;top:0;background:var(--hdr);z-index:2;font-weight:600;}
+thead th:first-child,tbody th:first-child{position:sticky;left:0;background:#fff;z-index:3;text-align:left;min-width:150px;}
+thead th:first-child{z-index:4;}
+.name{font-weight:600;}
+.code{color:var(--muted);font-size:10px;font-weight:400;}
+.latest{font-weight:700;font-size:12px;}
+.na{color:#bbb;}
+.legend{display:inline-flex;gap:6px;align-items:center;margin-left:4px;}
+.swatch{width:14px;height:12px;display:inline-block;border:1px solid #ddd;vertical-align:middle;}
+th.sep,td.sep{background:#fff !important;border-left:2px solid #ccc;}
+</style>
+</head>
+<body>
+<header>
+  <h1>ETF择时</h1>
+  <div class="bar">
+    <span id="updated"></span>
+    <span id="mode" class="badge">收盘</span>
+    <label><input type="checkbox" id="live"> 盘中实时（实时价替换最新一日）</label>
+    <button id="refresh">刷新数据</button>
+    <button id="force">强制刷新</button>
+    <span class="legend"><span class="swatch" style="background:rgba(255,153,0,.95);box-shadow:inset 0 0 0 2px rgba(200,40,40,.9)"></span>看多<span class="swatch" style="background:rgba(40,120,220,.9)"></span>空仓</span>
+  </div>
+</header>
+<div id="status">加载中…</div>
+<div class="wrap"><table id="matrix"></table></div>
+
+<script>
+const ETF_POOL = /*__POOL__*/[];
+const ETF_DATA = /*__DATA__*/ null;   // 离线快照: { asOf, tradeDates, weekDates, rows:[{code,name,moms,a2x,latest,latestA2x,live,liveA2x,weekMoms,weekLatest}] }
+const CONFIG = { EMA_SHORT:14, EMA_MID:25, COLS:30, WCOLS:4, KLINE_TTL:5*60*1000, QUOTE_TTL:30*1000 };
+const klineCache = new Map();
+const quoteCache = new Map();
+
+function toTencent(code){
+  const p = code.slice(0,2);
+  return (['51','58','56','60','68','90','11','13'].includes(p) ? 'sh' : 'sz') + code;
+}
+function cacheGet(map,key,ttl){
+  const e = map.get(key);
+  if(e && Date.now()-e.t < ttl) return e.v;
+  return null;
+}
+function cacheSet(map,key,v){ map.set(key,{t:Date.now(),v}); }
+
+async function fetchKline(full, ktype){
+  const key = full + ':' + (ktype||'day');
+  const c = cacheGet(klineCache,key,CONFIG.KLINE_TTL);
+  if(c) return c;
+  const url = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${full},${ktype||'day'},,,160,qfq`;
+  const r = await fetch(url);
+  const obj = await r.json();
+  const data = obj.data;
+  const node = data[full] || (Array.isArray(data) ? data[0][full] : null);
+  if(!node) throw new Error('no node '+full);
+  const rows = node.qfqday || node.day || node.qfqweek || node.week || node.bfqday;
+  const out = {
+    dates:  rows.map(x=>x[0]),
+    opens:  rows.map(x=>parseFloat(x[1])),
+    closes: rows.map(x=>parseFloat(x[2])),
+    highs:  rows.map(x=>parseFloat(x[3])),
+    lows:   rows.map(x=>parseFloat(x[4])),
+  };
+  cacheSet(klineCache,key,out);
+  return out;
+}
+async function fetchQuotes(fulls){
+  const c = cacheGet(quoteCache,'all',CONFIG.QUOTE_TTL);
+  if(c) return c;
+  const url = 'https://qt.gtimg.cn/q=' + fulls.join(',');
+  const buf = await (await fetch(url)).arrayBuffer();
+  const txt = new TextDecoder('gbk').decode(buf);
+  const re = /v_(\w+)="([^"]*)"/g; let m; const out = {};
+  while((m = re.exec(txt))){
+    const f = m[2].split('~');
+    out[m[1]] = { name:f[1], price:parseFloat(f[3]), prevClose:parseFloat(f[4]), time:f[30]||'' };
+  }
+  cacheSet(quoteCache,'all',out);
+  return out;
+}
+// ===== 文华多空 A 系斜率 =====
+function emaSeries(vals, n){
+  const k = 2/(n+1);
+  const out = []; let prev = vals[0];
+  for(let i=0;i<vals.length;i++){
+    prev = (i===0) ? vals[0] : prev + k*(vals[i]-prev);
+    out.push(prev);
+  }
+  return out;
+}
+function whA0(o,h,l,c){
+  const a=[]; for(let i=0;i<c.length;i++) a.push((l[i]+h[i]+c[i]*2)/4); return a;
+}
+function whSlopes(o,h,l,c){
+  const a0 = whA0(o,h,l,c);
+  const a1 = emaSeries(a0, CONFIG.EMA_SHORT);
+  const a2 = emaSeries(a0, CONFIG.EMA_MID);
+  const n = a0.length;
+  const s1 = new Array(n).fill(0), s2 = new Array(n).fill(0);
+  for(let i=1;i<n;i++){
+    s1[i] = (a1[i]-a1[i-1])/a1[i-1]*100;   // A1X 短期斜率%
+    s2[i] = (a2[i]-a2[i-1])/a2[i-1]*100;   // A2X 中期斜率%
+  }
+  return {a1, a2, s1, s2};
+}
+async function build(){
+  const live = document.getElementById('live').checked;
+  const status = document.getElementById('status');
+  status.textContent = '正在拉取日线数据（' + ETF_POOL.length + ' 只）…';
+  const fulls = ETF_POOL.map(e=>toTencent(e.code));
+  const kl = await Promise.all(ETF_POOL.map(async (e,i)=>{
+    try { const k = await fetchKline(fulls[i]); return { code:e.code, name:e.name, ...k }; }
+    catch(err){ return { code:e.code, name:e.name, error:err.message }; }
+  }));
+  const ok = kl.filter(k=>!k.error);
+  let cols = [];
+  if(ok.length){
+    const sets = ok.map(k=>new Set(k.dates));
+    const base = ok[0].dates;
+    cols = base.filter(d=>sets.every(s=>s.has(d))).slice(-CONFIG.COLS);
+  }
+  // 周线（右侧近 WCOLS 周 A1X）
+  status.textContent = '正在拉取周线数据…';
+  const wkl = await Promise.all(ETF_POOL.map(async (e,i)=>{
+    try { const k = await fetchKline(fulls[i], 'week'); return { code:e.code, name:e.name, ...k }; }
+    catch(err){ return { code:e.code, name:e.name, error:err.message }; }
+  }));
+  const okw = wkl.filter(k=>!k.error);
+  let weekDates = [];
+  if(okw.length){
+    const setsw = okw.map(k=>new Set(k.dates));
+    const basew = okw[0].dates;
+    weekDates = basew.filter(d=>setsw.every(s=>s.has(d))).slice(-CONFIG.WCOLS);
+  }
+  const wkMap = {}; okw.forEach(k=>{ wkMap[k.code]=k; });
+  let quotes = {};
+  if(live){
+    status.textContent = '拉取实时行情…';
+    quotes = await fetchQuotes(fulls);
+  }
+  const rowsData = kl.map(k=>{
+    if(k.error) return { code:k.code, name:k.name, error:true, moms:{}, a2x:{}, latest:null, weekMoms:{} };
+    const idxOf = {}; k.dates.forEach((d,i)=>idxOf[d]=i);
+    const {a1, a2, s1, s2} = whSlopes(k.opens, k.highs, k.lows, k.closes);
+    const map = {}, map2 = {};
+    for(const d of cols){
+      const p = idxOf[d];
+      if(p===undefined || p < 1) continue;   // A1X 需上一根差分
+      map[d] = s1[p]; map2[d] = s2[p];
+    }
+    const lastD = cols[cols.length-1];
+    if(live && lastD!==undefined){
+      const p = idxOf[lastD];
+      const q = quotes[toTencent(k.code)];
+      if(q && q.price>0 && p!==undefined && p>=1){
+        const a0n = (k.lows[p] + k.highs[p] + q.price*2)/4;
+        const k1 = 2/(CONFIG.EMA_SHORT+1), k2 = 2/(CONFIG.EMA_MID+1);
+        const a1last = a1[p-1] + k1*(a0n - a1[p-1]);
+        const a2last = a2[p-1] + k2*(a0n - a2[p-1]);
+        map[lastD]  = (a1last - a1[p-1])/a1[p-1]*100;
+        map2[lastD] = (a2last - a2[p-1])/a2[p-1]*100;
+      }
+    }
+    // 周线 A1X（仅 A1X）
+    let weekMoms = {};
+    const wk = wkMap[k.code];
+    if(wk){
+      const {s1: ws1} = whSlopes(wk.opens, wk.highs, wk.lows, wk.closes);
+      const idxw = {}; wk.dates.forEach((d,i)=>idxw[d]=i);
+      for(const wd of weekDates){
+        const p = idxw[wd];
+        if(p===undefined || p < 1) continue;
+        weekMoms[wd] = ws1[p];
+      }
+    }
+    return { code:k.code, name:k.name, error:false, moms:map, a2x:map2, latest: map[lastD], weekMoms };
+  });
+  rowsData.sort((a,b)=> (b.latest==null?-1e9:b.latest) - (a.latest==null?-1e9:a.latest));
+  return { cols, rowsData, live, weekDates };
+}
+function renderSnapshot(d){
+  const cols = d.tradeDates;
+  const weekDates = d.weekDates || [];
+  const live = document.getElementById('live').checked;
+  const rowsData = d.rows.map(r=>{
+    const moms = Object.assign({}, r.moms);
+    const a2x = Object.assign({}, r.a2x || {});
+    if(live && r.live!=null){ moms[cols[cols.length-1]] = r.live; }
+    if(live && r.liveA2x!=null){ a2x[cols[cols.length-1]] = r.liveA2x; }
+    const latest = (live && r.live!=null) ? r.live : r.latest;
+    return { code:r.code, name:r.name, error:false, moms, a2x, latest, weekMoms: r.weekMoms || {} };
+  });
+  rowsData.sort((a,b)=> (b.latest==null?-1e9:b.latest) - (a.latest==null?-1e9:a.latest));
+  render({ cols, rowsData, live, weekDates });
+}
+function colorFor(v, scale){
+  if(v==null) return 'background:#fafafa;color:#bbb';
+  const t = Math.max(-1, Math.min(1, v/scale));
+  if(t>=0){ const a=0.12+0.78*t; return `background:rgba(214,40,40,${a.toFixed(3)})`; }
+  const a=0.12+0.78*(-t); return `background:rgba(40,120,220,${a.toFixed(3)});color:#06243f`;   // 负斜率：蓝
+}
+// 文华多空信号：看多(A1X>=0) / 逃顶(A1X<0 且 A2X<0)，其余为空头(未逃顶)
+function signalFor(a1x, a2x){
+  if(a1x==null) return null;
+  if(a1x >= 0) return 'long';
+  if(a2x!=null && a2x < 0) return 'escape';
+  return null;
+}
+const SIG_LABEL = { long:'看多', escape:'逃顶' };
+function cellStyle(v, v2, scale){
+  if(v==null) return 'background:#fafafa;color:#bbb';
+  const sig = signalFor(v, v2);
+  if(sig){
+    const t = Math.max(0, Math.min(1, Math.abs(v)/scale));
+    const a = (0.30 + 0.65*t).toFixed(3);
+    if(sig==='long') return `background:rgba(255,153,0,${a});color:#3a1f00;box-shadow:inset 0 0 0 2px rgba(200,40,40,.85)`;
+    return `background:rgba(40,120,220,${a});color:#06243f`;   // 逃顶/空仓：蓝
+  }
+  return colorFor(v, scale);
+}
+function render(M){
+  const {cols, rowsData, live, weekDates=[]} = M;
+  const vals = [];
+  rowsData.forEach(r=>cols.forEach(d=>{ if(r.moms[d]!=null) vals.push(r.moms[d]); }));
+  vals.sort((a,b)=>a-b);
+  const scale = Math.max(0.5, Math.abs(vals[Math.floor(vals.length*0.9)]||1));
+  const wvals = [];
+  rowsData.forEach(r=>{ if(r.weekMoms) weekDates.forEach(wd=>{ const v=r.weekMoms[wd]; if(v!=null) wvals.push(v); }); });
+  wvals.sort((a,b)=>a-b);
+  const wscale = wvals.length ? Math.max(0.5, Math.abs(wvals[Math.floor(wvals.length*0.9)]||1)) : 1;
+  const tbl = document.getElementById('matrix');
+  const fmt = d => d.slice(5);
+  let html = '<thead><tr><th>ETF / 最新动量(A1X%)</th>';
+  cols.forEach((d,i)=>{
+    const tag = (live && i===cols.length-1) ? ' 🔴' : '';
+    html += `<th>${fmt(d)}${tag}</th>`;
+  });
+  if(weekDates.length){
+    html += '<th class="sep"></th>';
+    weekDates.forEach(d=>{ html += `<th>${fmt(d)}周</th>`; });
+  }
+  html += '</tr></thead><tbody>';
+  // 均值行：放第一行，随内容滚动
+  const avgArr = cols.map(d=>{
+    const arr = rowsData.map(r=>r.moms[d]).filter(v=>v!=null);
+    return arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : null;
+  });
+  const avgArr2 = cols.map(d=>{
+    const arr = rowsData.map(r=>r.a2x[d]).filter(v=>v!=null);
+    return arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : null;
+  });
+  const avgLast = avgArr[avgArr.length-1];
+  html += '<tr>';
+  html += `<th><span class="name">均值</span><br><span class="latest" style="${avgLast==null?'':cellStyle(avgLast, avgArr2[avgArr2.length-1], scale)}">${avgLast==null?'—':avgLast.toFixed(2)}</span></th>`;
+  cols.forEach((d,i)=>{
+    const avg = avgArr[i], avg2 = avgArr2[i];
+    if(avg==null){ html += '<td class="na">·</td>'; }
+    else { const sg=signalFor(avg,avg2); html += `<td style="${cellStyle(avg,avg2,scale)}" title="均值 ${d}: A1X ${avg.toFixed(2)}% / A2X ${(avg2==null?'—':avg2.toFixed(2))}%${sg?' · 信号:'+SIG_LABEL[sg]:''}">${avg.toFixed(2)}</td>`; }
+  });
+  if(weekDates.length){
+    const avgW = weekDates.map(wd=>{
+      const arr = rowsData.map(r=>r.weekMoms && r.weekMoms[wd]).filter(v=>v!=null);
+      return arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : null;
+    });
+    html += '<td class="sep"></td>';
+    weekDates.forEach((wd,i)=>{
+      const avg = avgW[i];
+      if(avg==null){ html += '<td class="na">·</td>'; }
+      else { html += `<td style="${cellStyle(avg,null,wscale)}" title="周均值 ${wd}: A1X ${avg.toFixed(2)}%">${avg.toFixed(2)}</td>`; }
+    });
+  }
+  html += '</tr>';
+  // 各 ETF 行
+  rowsData.forEach(r=>{
+    html += '<tr>';
+    const lv = r.latest==null ? '—' : r.latest.toFixed(2);
+    const lvColor = r.latest==null?'':cellStyle(r.latest, r.a2x[cols[cols.length-1]], scale);
+    html += `<th><span class="name">${r.name||r.code}</span> <span class="code">${r.code}</span><br><span class="latest" style="${lvColor}">${lv}</span></th>`;
+    cols.forEach(d=>{
+      const v = r.moms[d], v2 = r.a2x[d];
+      if(v==null){ html += '<td class="na">·</td>'; }
+      else { const sg=signalFor(v,v2); html += `<td style="${cellStyle(v,v2,scale)}" title="${r.name} ${d}: A1X ${v.toFixed(2)}% / A2X ${(v2==null?'—':v2.toFixed(2))}%${sg?' · 信号:'+SIG_LABEL[sg]:''}">${v.toFixed(2)}</td>`; }
+    });
+    if(weekDates.length){
+      html += '<td class="sep"></td>';
+      weekDates.forEach(wd=>{
+        const v = r.weekMoms ? r.weekMoms[wd] : null;
+        if(v==null){ html += '<td class="na">·</td>'; }
+        else { const sg=signalFor(v,null); html += `<td style="${cellStyle(v,null,wscale)}" title="${r.name} ${wd}(周): A1X ${v.toFixed(2)}%${sg?' · 信号:'+SIG_LABEL[sg]:''}">${v.toFixed(2)}</td>`; }
+      });
+    }
+    html += '</tr>';
+  });
+  html += '</tbody>';
+  tbl.innerHTML = html;
+  document.getElementById('updated').textContent = '更新于 ' + new Date().toLocaleString('zh-CN');
+  const modeEl = document.getElementById('mode');
+  modeEl.textContent = live ? (ETF_DATA ? '实时快照' : '盘中实时') : '收盘';
+  modeEl.className = 'badge' + (live?' live':'');
+  document.getElementById('status').textContent = `完成：${rowsData.filter(r=>!r.error).length}/${rowsData.length} 只成功，列=${cols.length} 个交易日`;
+}
+function withTimeout(p, ms){
+  return new Promise((res,rej)=>{
+    const t = setTimeout(()=>rej(new Error('在线请求超时')), ms);
+    p.then(v=>{clearTimeout(t);res(v);}, e=>{clearTimeout(t);rej(e);});
+  });
+}
+function showErr(msg){
+  document.getElementById('status').innerHTML = '<span style="color:#c22">' + msg + '</span>';
+}
+async function refresh(){
+  // 有离线快照时：先尝试在线（真实浏览器会成功），失败(如预览沙箱拦截)则回退快照
+  if(ETF_DATA){
+    try{
+      const M = await withTimeout(build(), 4000);
+      render(M);
+      return;
+    }catch(e){
+      renderSnapshot(ETF_DATA);
+      document.getElementById('status').textContent =
+        '在线拉取不可用（' + (e && e.message ? e.message : e) + '），已显示本地快照 · 抓取于 ' + ETF_DATA.asOf;
+      return;
+    }
+  }
+  try{
+    const M = await build();
+    render(M);
+  }catch(e){
+    showErr('请求失败：' + (e && e.message ? e.message : e) + '。若长时间停在“加载中…”，请用真实浏览器打开 http://localhost:8137');
+  }
+}
+function forceRefresh(){
+  if(ETF_DATA){ renderSnapshot(ETF_DATA); document.getElementById('status').textContent = '本地快照 · 抓取于 ' + ETF_DATA.asOf; return; }
+  klineCache.clear(); quoteCache.clear(); refresh();
+}
+window.addEventListener('error', e => showErr('页面错误：' + (e.message||e.error)));
+window.addEventListener('unhandledrejection', e => { const r = e.reason; showErr('未捕获异常：' + (r && r.message ? r.message : r)); });
+document.getElementById('refresh').addEventListener('click', refresh);
+document.getElementById('force').addEventListener('click', forceRefresh);
+document.getElementById('live').addEventListener('change', refresh);
+refresh();
+</script>
+</body>
+</html>
