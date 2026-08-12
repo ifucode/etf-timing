@@ -9,3 +9,9 @@ __pycache__/
 
 # 本地日志
 *.log
+# 明文凭据/密钥（切勿入库）
+tokens.txt
+*.token
+*.pat
+.env
+.secret*
