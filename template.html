@@ -31,6 +31,10 @@ thead th:first-child{z-index:4;}
 .legend{display:inline-flex;gap:6px;align-items:center;margin-left:4px;}
 .swatch{width:14px;height:12px;display:inline-block;border:1px solid #ddd;vertical-align:middle;}
 th.sep,td.sep{background:#fff !important;border-left:2px solid #ccc;}
+th.delta,td.delta{background:#f7f7f9;font-weight:700;font-size:14px;min-width:30px;line-height:1;}
+.up{color:#d62828;}      /* ▲ 较前日增大 = 涨 = 红 */
+.down{color:#1a8a4c;}    /* ▼ 较前日减小 = 跌 = 绿 */
+.flat{color:#999;}
 </style>
 </head>
 <body>
@@ -230,6 +234,12 @@ function signalFor(a1x, a2x){
   return null;
 }
 const SIG_LABEL = { long:'看多', escape:'逃顶' };
+function deltaArrow(cur, prev){
+  if(cur==null || prev==null) return '<span class="flat">·</span>';
+  if(cur > prev) return '<span class="up" title="较前日 A1X 增大">▲</span>';
+  if(cur < prev) return '<span class="down" title="较前日 A1X 减小">▼</span>';
+  return '<span class="flat" title="较前日 A1X 持平">＝</span>';
+}
 function cellStyle(v, v2, scale){
   if(v==null) return 'background:#fafafa;color:#bbb';
   const sig = signalFor(v, v2);
@@ -258,6 +268,7 @@ function render(M){
     const tag = (live && i===cols.length-1) ? ' 🔴' : '';
     html += `<th>${fmt(d)}${tag}</th>`;
   });
+  html += '<th class="delta" title="较前一交易日 A1X 变化方向：▲增大 / ▼减小">Δ</th>';
   if(weekDates.length){
     html += '<th class="sep"></th>';
     weekDates.forEach(d=>{ html += `<th>${fmt(d)}周</th>`; });
@@ -280,6 +291,8 @@ function render(M){
     if(avg==null){ html += '<td class="na">·</td>'; }
     else { const sg=signalFor(avg,avg2); html += `<td style="${cellStyle(avg,avg2,scale)}" title="均值 ${d}: A1X ${avg.toFixed(2)}% / A2X ${(avg2==null?'—':avg2.toFixed(2))}%${sg?' · 信号:'+SIG_LABEL[sg]:''}">${avg.toFixed(2)}</td>`; }
   });
+  const mCur = avgArr[avgArr.length-1], mPrev = avgArr[avgArr.length-2];
+  html += `<td class="delta">${deltaArrow(mCur, mPrev)}</td>`;
   if(weekDates.length){
     const avgW = weekDates.map(wd=>{
       const arr = rowsData.map(r=>r.weekMoms && r.weekMoms[wd]).filter(v=>v!=null);
@@ -304,6 +317,8 @@ function render(M){
       if(v==null){ html += '<td class="na">·</td>'; }
       else { const sg=signalFor(v,v2); html += `<td style="${cellStyle(v,v2,scale)}" title="${r.name} ${d}: A1X ${v.toFixed(2)}% / A2X ${(v2==null?'—':v2.toFixed(2))}%${sg?' · 信号:'+SIG_LABEL[sg]:''}">${v.toFixed(2)}</td>`; }
     });
+    const cur = r.moms[cols[cols.length-1]], prev = r.moms[cols[cols.length-2]];
+    html += `<td class="delta">${deltaArrow(cur, prev)}</td>`;
     if(weekDates.length){
       html += '<td class="sep"></td>';
       weekDates.forEach(wd=>{
