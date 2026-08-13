@@ -15,7 +15,7 @@
 矩阵主动量 = A1X（文华主图的核心决策驱动：A1X>=0 看多/持股，A1X<0 转空）；
 A2X 作为副参考（A1X<0 且 A2X<0 时 逃顶/空仓），存入 a2x 字段供副图/ tooltip 使用。
 """
-import json, math, time, urllib.request, urllib.parse, re, csv
+import json, math, time, urllib.request, urllib.parse, re, csv, datetime
 
 # ---- ETF 标的池（来自 ETF-pool.csv：代码,名称,分类,组内序号）----
 def load_pool(path='ETF-pool.csv'):
@@ -39,6 +39,13 @@ WKLINE_WEEKS = 160  # 抓取周线长度（足够 EMA 预热）
 
 def to_tencent(code):
     return ('sh' if code[:2] in ('51','58','56','60','68','90','11','13') else 'sz') + code
+
+def iso_week_key(datestr):
+    """返回日期所属自然周键（年-W周，周一为一周起点），用于把“本周至今”这根
+    不同 ETF 截止日不同的周线合并成同一列。"""
+    y, m, dd = int(datestr[:4]), int(datestr[5:7]), int(datestr[8:10])
+    wk = datetime.date(y, m, dd).isocalendar().week
+    return f"{y}-W{wk:02d}"
 
 def fetch(url, retries=3):
     last = None
@@ -206,11 +213,20 @@ def main():
             print(f"  ... {i+1}/{len(POOL)}")
         time.sleep(0.05)
     okw = [c for c in ok if c[0] in kl_week]
-    all_w = set()
-    for c in okw:
-        all_w.update(kl_week[c[0]][0])
-    week_dates = sorted(all_w)[-WCOLS:]
-    print(f"周线列 = {len(week_dates)} 个，最新 {week_dates[-1] if week_dates else '无'}")
+    # 以自然周(ISO 周)为单位对齐：避免“本周至今”这根被不同 ETF 拆成不同日期列
+    week_iso_rep = {}          # iso 周键 -> 代表日期(全局该周内最大日期)
+    week_a1x = {}              # code -> (dates, a1x_w)
+    for code in [c[0] for c in okw]:
+        dw, ow, hw, lw, cw = kl_week[code]
+        _, _, a1x_w, _ = wh_slopes(ow, hw, lw, cw)
+        week_a1x[code] = (dw, a1x_w)
+        for d in dw:
+            k = iso_week_key(d)
+            if d > week_iso_rep.get(k, ''):
+                week_iso_rep[k] = d
+    week_dates = sorted(week_iso_rep.values())[-WCOLS:]
+    week_iso_of_date = {rep: iso_week_key(rep) for rep in week_dates}
+    print(f"周线列(自然周) = {len(week_dates)} 个: {week_dates}")
 
     rows = []
     for code, name, cat in ok:
@@ -238,17 +254,21 @@ def main():
             live, live_a2x = wh_live_slope(a1_full[p-1], a2_full[p-1], a0_last_new)
             live = round(live, 4)
             live_a2x = round(live_a2x, 4)
-        # 周线 A1X（近 WCOLS 周），仅 A1X
+        # 周线 A1X（近 WCOLS 个自然周），按 ISO 周对齐聚合，键为该周代表日期
         week_moms = {}
-        if code in kl_week:
-            dw, ow, hw, lw, cw = kl_week[code]
-            _, _, a1x_w, _ = wh_slopes(ow, hw, lw, cw)
+        if code in week_a1x:
+            dw, a1x_w = week_a1x[code]
             idxw = {d: i for i, d in enumerate(dw)}
-            for wd in week_dates:
-                pw = idxw.get(wd)
+            for rep in week_dates:
+                ik = week_iso_of_date[rep]
+                cand = [d for d in dw if iso_week_key(d) == ik]
+                if not cand:
+                    continue
+                dlast = max(cand)
+                pw = idxw.get(dlast)
                 if pw is None or pw < 1:
                     continue
-                week_moms[wd] = round(a1x_w[pw], 4)
+                week_moms[rep] = round(a1x_w[pw], 4)
         week_latest = week_moms.get(week_dates[-1]) if week_dates else None
         rows.append({
             'code': code, 'name': name, 'cat': cat, 'moms': moms, 'a2x': a2x,
