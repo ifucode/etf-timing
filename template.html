@@ -138,6 +138,13 @@ function todayStr(){
 function isTradingToday(cols){
   return cols.length>0 && cols[cols.length-1] === todayStr();
 }
+function isoMonday(datestr){
+  // 返回该日期所属自然周的周一(ISO，周一为一周起点)，用于按周对齐周线列
+  const d = new Date(datestr + 'T00:00:00');
+  const day = (d.getDay() + 6) % 7; // 周一=0
+  d.setDate(d.getDate() - day);
+  return d.toISOString().slice(0, 10);
+}
 async function build(){
   let live = false;
   const status = document.getElementById('status');
@@ -163,11 +170,16 @@ async function build(){
     catch(err){ return { code:e.code, name:e.name, error:err.message }; }
   }));
   const okw = wkl.filter(k=>!k.error);
-  let weekDates = [];
+  let weekDates = [], mondayList = [];
   if(okw.length){
-    const allW = new Set();
-    okw.forEach(k => k.dates.forEach(d => allW.add(d)));
-    weekDates = Array.from(allW).sort().slice(-CONFIG.WCOLS);
+    // 以自然周(周一)为单位对齐：避免“本周至今”被不同 ETF 拆成不同日期列
+    const mondayRep = {}; // 周一 -> 代表日期(该周最大)
+    okw.forEach(k => k.dates.forEach(d => {
+      const m = isoMonday(d);
+      if(d > (mondayRep[m] || '')) mondayRep[m] = d;
+    }));
+    mondayList = Object.keys(mondayRep).sort().slice(-CONFIG.WCOLS);
+    weekDates = mondayList.map(m => mondayRep[m]);
   }
   const wkMap = {}; okw.forEach(k=>{ wkMap[k.code]=k; });
   let quotes = {};
@@ -198,16 +210,21 @@ async function build(){
         map2[lastD] = (a2last - a2[p-1])/a2[p-1]*100;
       }
     }
-    // 周线 A1X（仅 A1X）
+    // 周线 A1X（仅 A1X），按自然周(周一)对齐聚合，键为该周代表日期
     let weekMoms = {};
     const wk = wkMap[k.code];
     if(wk){
       const {s1: ws1} = whSlopes(wk.opens, wk.highs, wk.lows, wk.closes);
       const idxw = {}; wk.dates.forEach((d,i)=>idxw[d]=i);
-      for(const wd of weekDates){
-        const p = idxw[wd];
+      for(let wi=0; wi<weekDates.length; wi++){
+        const rep = weekDates[wi];
+        const m = mondayList[wi];
+        const cand = wk.dates.filter(d => isoMonday(d) === m);
+        if(!cand.length) continue;
+        const dlast = cand.reduce((a,b)=> a>b?a:b);
+        const p = idxw[dlast];
         if(p===undefined || p < 1) continue;
-        weekMoms[wd] = ws1[p];
+        weekMoms[rep] = ws1[p];
       }
     }
     return { code:k.code, name:k.name, error:false, moms:map, a2x:map2, latest: map[lastD], weekMoms };
