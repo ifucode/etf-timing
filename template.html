@@ -18,11 +18,12 @@ h1{font-size:17px;margin:0 0 4px;}
 button{cursor:pointer;border:1px solid #ccc;background:#fff;border-radius:6px;padding:4px 12px;font-size:12px;}
 button:hover{background:#f3f3f3;}
 #status{padding:10px 18px;color:var(--muted);font-size:12px;}
-.wrap{overflow:auto;max-height:calc(100vh - 150px);padding:0 18px 24px;}
+.wrap{overflow:auto;max-height:calc(100vh - 150px);padding:0 18px 24px 0;}
+.wrap::before{content:"";position:fixed;left:0;top:0;bottom:0;width:18px;background:#fff;z-index:20;pointer-events:none;}
 table{border-collapse:collapse;font-size:11px;white-space:nowrap;}
 th,td{border:1px solid var(--line);padding:3px 5px;text-align:center;height:26px;}
-thead th{position:sticky;top:0;background:var(--hdr);z-index:2;font-weight:600;}
-thead th:first-child,tbody th:first-child{position:sticky;left:0;background:#fff;z-index:3;text-align:left;min-width:150px;}
+thead th{position:sticky;top:0;background:#fff;z-index:2;font-weight:600;}
+thead th:first-child,tbody th:first-child{position:sticky;left:0;background:#fff;z-index:3;text-align:left;min-width:150px;padding-left:18px;}
 thead th:first-child{z-index:4;}
 .name{font-weight:600;}
 .code{color:var(--muted);font-size:10px;font-weight:400;}
@@ -33,7 +34,7 @@ thead th:first-child{z-index:4;}
 th.sep,td.sep{background:#fff !important;border-left:2px solid #ccc;}
 th.delta,td.delta{background:#f7f7f9;font-weight:700;font-size:14px;min-width:30px;line-height:1;}
 .up{color:#d62828;}      /* ▲ 较前日增大 = 涨 = 红 */
-.down{color:#1a8a4c;}    /* ▼ 较前日减小 = 跌 = 绿 */
+.down{color:#1a1a1a;}    /* ▼ 较前日减小 = 黑 */
 .flat{color:#999;}
 </style>
 </head>
@@ -42,8 +43,6 @@ th.delta,td.delta{background:#f7f7f9;font-weight:700;font-size:14px;min-width:30
   <h1>ETF择时</h1>
   <div class="bar">
     <span id="updated"></span>
-    <span id="mode" class="badge">收盘</span>
-    <label><input type="checkbox" id="live"> 盘中实时（实时价替换最新一日）</label>
     <button id="refresh">刷新数据</button>
     <button id="force">强制刷新</button>
     <span class="legend"><span class="swatch" style="background:rgba(255,153,0,.95);box-shadow:inset 0 0 0 2px rgba(200,40,40,.9)"></span>看多<span class="swatch" style="background:rgba(40,120,220,.9)"></span>空仓</span>
@@ -131,7 +130,7 @@ function whSlopes(o,h,l,c){
   return {a1, a2, s1, s2};
 }
 async function build(){
-  const live = document.getElementById('live').checked;
+  const live = false;
   const status = document.getElementById('status');
   status.textContent = '正在拉取日线数据（' + ETF_POOL.length + ' 只）…';
   const fulls = ETF_POOL.map(e=>toTencent(e.code));
@@ -208,7 +207,7 @@ async function build(){
 function renderSnapshot(d){
   const cols = d.tradeDates;
   const weekDates = d.weekDates || [];
-  const live = document.getElementById('live').checked;
+  const live = false;
   const rowsData = d.rows.map(r=>{
     const moms = Object.assign({}, r.moms);
     const a2x = Object.assign({}, r.a2x || {});
@@ -332,9 +331,6 @@ function render(M){
   html += '</tbody>';
   tbl.innerHTML = html;
   document.getElementById('updated').textContent = '更新于 ' + new Date().toLocaleString('zh-CN');
-  const modeEl = document.getElementById('mode');
-  modeEl.textContent = live ? (ETF_DATA ? '实时快照' : '盘中实时') : '收盘';
-  modeEl.className = 'badge' + (live?' live':'');
   document.getElementById('status').textContent = `完成：${rowsData.filter(r=>!r.error).length}/${rowsData.length} 只成功，列=${cols.length} 个交易日`;
 }
 function withTimeout(p, ms){
@@ -375,7 +371,6 @@ window.addEventListener('error', e => showErr('页面错误：' + (e.message||e.
 window.addEventListener('unhandledrejection', e => { const r = e.reason; showErr('未捕获异常：' + (r && r.message ? r.message : r)); });
 document.getElementById('refresh').addEventListener('click', refresh);
 document.getElementById('force').addEventListener('click', forceRefresh);
-document.getElementById('live').addEventListener('change', refresh);
 refresh();
 </script>
 </body>
