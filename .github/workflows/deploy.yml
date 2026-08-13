@@ -56,7 +56,7 @@ jobs:
           FUYAO_API_KEY: ${{ secrets.FUYAO_API_KEY }}
         run: |
           python fetch_data.py
-          python fill_today.py 520830 || true
+          python fill_today.py ALL || true
 
       - name: 提交最新快照回仓库（[skip ci] 避免循环触发）
         if: steps.td.outputs.run == 'true'
