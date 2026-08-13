@@ -4,9 +4,9 @@ cd /d "%~dp0"
 set "PY="
 where python >nul 2>&1 && set "PY=python"
 if not defined PY ( where py >nul 2>&1 && set "PY=py" )
-if not defined PY ( if exist "D:\ProgramData\anaconda3\python.exe" set "PY=D:\ProgramData\anaconda3\python.exe" )
-if not defined PY ( if exist "C:\Users\iszho\.workbuddy\binaries\python\versions\3.13.12\python.exe" set "PY=C:\Users\iszho\.workbuddy\binaries\python\versions\3.13.12\python.exe" )
-if not defined PY ( if exist "C:\Users\iszho\.workbuddy\binaries\python\versions\3.11.7\python.exe" set "PY=C:\Users\iszho\.workbuddy\binaries\python\versions\3.11.7\python.exe" )
+if not defined PY ( if exist "D:/ProgramData/anaconda3/python.exe" set "PY=D:/ProgramData/anaconda3/python.exe" )
+if not defined PY ( if exist "C:/Users/iszho/.workbuddy/binaries/python/versions/3.13.12/python.exe" set "PY=C:/Users/iszho/.workbuddy/binaries/python/versions/3.13.12/python.exe" )
+if not defined PY ( if exist "C:/Users/iszho/.workbuddy/binaries/python/versions/3.11.7/python.exe" set "PY=C:/Users/iszho/.workbuddy/binaries/python/versions/3.11.7/python.exe" )
 if not defined PY (
   echo [ERROR] Python not found. Install Python 3 or add it to PATH.
   pause
