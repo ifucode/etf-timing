@@ -53,32 +53,59 @@ def fetch(url, retries=3):
             time.sleep(0.4 * (i+1))
     raise last
 
-def get_kline(code, ktype='day'):
+def get_kline_em(code, ktype='day'):
+    """东方财富 K 线（沙箱/本地均可直连，作为主源）。返回 (dates, opens, highs, lows, closes)。"""
+    full = to_tencent(code)
+    market = '1' if full.startswith('sh') else '0'
+    klt = '102' if ktype == 'week' else '101'   # 101=日, 102=周
+    n = WKLINE_WEEKS if ktype == 'week' else KLINE_DAYS
+    url = (f"https://push2his.eastmoney.com/api/qt/stock/kline/get"
+           f"?fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55,f56"
+           f"&klt={klt}&fqt=1&secid={market}.{code}&end=20500101&lmt={n}")
+    obj = json.loads(fetch(url))
+    data = obj.get('data') or {}
+    kl = data.get('klines')
+    if not kl:
+        raise ValueError('empty em klines for ' + full)
+    dates, opens, closes, highs, lows = [], [], [], [], []
+    for row in kl:
+        f = row.split(',')
+        dates.append(f[0]); opens.append(float(f[1])); closes.append(float(f[2]))
+        highs.append(float(f[3])); lows.append(float(f[4]))
+    return dates, opens, highs, lows, closes
+
+def get_kline_tx(code, ktype='day'):
+    """腾讯 K 线（本地直连，作为兜底）。"""
     full = to_tencent(code)
     n = WKLINE_WEEKS if ktype == 'week' else KLINE_DAYS
     url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={full},{ktype},,,{n},qfq"
+    obj = json.loads(fetch(url))
+    data = obj.get('data')
+    node = data.get(full) if isinstance(data, dict) else (data[0].get(full) if data else None)
+    if not node:
+        raise ValueError('node missing for ' + full)
+    rows = (node.get('qfqday') or node.get('day') or node.get('qfqweek')
+            or node.get('week') or node.get('bfqday'))
+    if not rows:
+        raise ValueError('empty rows for ' + full)
+    # 行格式: [date, open, close, high, low, volume, ...]
+    dates  = [r[0] for r in rows]
+    opens  = [float(r[1]) for r in rows]
+    closes = [float(r[2]) for r in rows]
+    highs  = [float(r[3]) for r in rows]
+    lows   = [float(r[4]) for r in rows]
+    return dates, opens, highs, lows, closes
+
+def get_kline(code, ktype='day'):
+    """优先东方财富，失败回退腾讯。"""
     last = None
-    for attempt in range(3):
-        try:
-            obj = json.loads(fetch(url))
-            data = obj.get('data')
-            node = data.get(full) if isinstance(data, dict) else (data[0].get(full) if data else None)
-            if not node:
-                raise ValueError('node missing for ' + full)
-            rows = (node.get('qfqday') or node.get('day') or node.get('qfqweek')
-                    or node.get('week') or node.get('bfqday'))
-            if not rows:
-                raise ValueError('empty rows for ' + full)
-            # 行格式: [date, open, close, high, low, volume, ...]
-            dates  = [r[0] for r in rows]
-            opens  = [float(r[1]) for r in rows]
-            closes = [float(r[2]) for r in rows]
-            highs  = [float(r[3]) for r in rows]
-            lows   = [float(r[4]) for r in rows]
-            return dates, opens, highs, lows, closes
-        except Exception as e:
-            last = e
-            time.sleep(0.4 * (attempt + 1))
+    for fn in (get_kline_em, get_kline_tx):
+        for attempt in range(2):
+            try:
+                return fn(code, ktype)
+            except Exception as e:
+                last = e
+                time.sleep(0.3 * (attempt + 1))
     raise last
 
 # ============ 文华多空 A 系斜率计算 ============
@@ -155,11 +182,12 @@ def main():
             print(f"  ... {i+1}/{len(POOL)}")
         time.sleep(0.05)
 
-    # 共同交易日（取各只交集里最近的 COLS 个）
+    # 交易日列：取各只并集里最近的 COLS 个（任一只有的最新日都保留，缺者显示 ·，避免单只缺日拖累全体）
     ok = [c for c in POOL if c[0] in kl]
-    sets = [set(kl[c[0]][0]) for c in ok]
-    base = kl[ok[0][0]][0]
-    trade_dates = [d for d in base if all(d in s for s in sets)][-COLS:]
+    all_dates = set()
+    for c in ok:
+        all_dates.update(kl[c[0]][0])
+    trade_dates = sorted(all_dates)[-COLS:]
     print(f"交易日列 = {len(trade_dates)} 个，最新 {trade_dates[-1]}")
 
     # 实时快照
@@ -178,9 +206,10 @@ def main():
             print(f"  ... {i+1}/{len(POOL)}")
         time.sleep(0.05)
     okw = [c for c in ok if c[0] in kl_week]
-    setsw = [set(kl_week[c[0]][0]) for c in okw]
-    basew = kl_week[okw[0][0]][0] if okw else []
-    week_dates = [d for d in basew if all(d in s for s in setsw)][-WCOLS:]
+    all_w = set()
+    for c in okw:
+        all_w.update(kl_week[c[0]][0])
+    week_dates = sorted(all_w)[-WCOLS:]
     print(f"周线列 = {len(week_dates)} 个，最新 {week_dates[-1] if week_dates else '无'}")
 
     rows = []
