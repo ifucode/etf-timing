@@ -27,6 +27,8 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      TZ: Asia/Shanghai   # 日志与 asOf 均按北京时间显示
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
