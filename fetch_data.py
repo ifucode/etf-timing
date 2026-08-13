@@ -15,7 +15,7 @@
 矩阵主动量 = A1X（文华主图的核心决策驱动：A1X>=0 看多/持股，A1X<0 转空）；
 A2X 作为副参考（A1X<0 且 A2X<0 时 逃顶/空仓），存入 a2x 字段供副图/ tooltip 使用。
 """
-import json, math, time, urllib.request, urllib.parse, re, csv, datetime
+import json, math, time, os, urllib.request, urllib.parse, re, csv, datetime
 
 # ---- ETF 标的池（来自 ETF-pool.csv：代码,名称,分类,组内序号）----
 def load_pool(path='ETF-pool.csv'):
@@ -47,11 +47,14 @@ def iso_week_key(datestr):
     wk = datetime.date(y, m, dd).isocalendar().week
     return f"{y}-W{wk:02d}"
 
-def fetch(url, retries=3):
+def fetch(url, retries=3, headers=None):
     last = None
+    h = {'User-Agent':'Mozilla/5.0'}
+    if headers:
+        h.update(headers)
     for i in range(retries):
         try:
-            req = urllib.request.Request(url, headers={'User-Agent':'Mozilla/5.0'})
+            req = urllib.request.Request(url, headers=h)
             with urllib.request.urlopen(req, timeout=20) as r:
                 raw = r.read().decode('utf-8','ignore')
             return raw
@@ -59,6 +62,93 @@ def fetch(url, retries=3):
             last = e
             time.sleep(0.4 * (i+1))
     raise last
+
+# ---- 同花顺金融数据 API（fuyao.aicubes.cn，主数据源；需 API Key）----
+def get_fuyao_key():
+    """API Key 优先级：环境变量 FUYAO_API_KEY > 本地 fuyao_key.txt（已被 .gitignore 排除）。
+    未配置时返回 None，上层会回退到东方财富/腾讯。绝不硬编码 Key 到本文件。"""
+    v = os.environ.get('FUYAO_API_KEY')
+    if v and v.strip():
+        return v.strip()
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fuyao_key.txt')
+    if os.path.exists(p):
+        try:
+            return open(p, 'r', encoding='utf-8').read().strip()
+        except Exception:
+            return None
+    return None
+
+def to_thscode(code):
+    """ETF 6 位代码 -> 同花顺 thscode（沪市 .SH / 深市 .SZ）。"""
+    return code + ('.SH' if code[:2] in ('51','58','56','60','68','90','11','13') else '.SZ')
+
+def day_to_week(dates, o, h, l, c):
+    """日线序列 -> 周线序列：按 ISO 自然周（周一为起点）聚合，
+    周开=组首日开，周高=max，周低=min，周收=组末日收，周日期=组末日。"""
+    groups = {}
+    for i, d in enumerate(dates):
+        y, mo, da = int(d[:4]), int(d[5:7]), int(d[8:10])
+        wk = datetime.date(y, mo, da).isocalendar().week
+        groups.setdefault(f"{y}-W{wk:02d}", []).append(i)
+    wdates, wo, wh, wl, wc = [], [], [], [], []
+    for mk in sorted(groups):
+        idxs = groups[mk]
+        wdates.append(dates[idxs[-1]])
+        wo.append(o[idxs[0]])
+        wh.append(max(h[i] for i in idxs))
+        wl.append(min(l[i] for i in idxs))
+        wc.append(c[idxs[-1]])
+    return wdates, wo, wh, wl, wc
+
+def get_kline_ths(code, ktype='day'):
+    """同花顺 ETF 历史日线（/api/fund/market/historical，仅 ETF，adjust=null 不复权）。
+    该接口只给日线，ktype='week' 时由日线本地聚合为周线。"""
+    key = get_fuyao_key()
+    if not key:
+        raise RuntimeError('no fuyao key')
+    thscode = to_thscode(code)
+    end_ms = int(time.time() * 1000)
+    start_ms = end_ms - 730 * 86400 * 1000   # 约 2 年，足够 EMA 预热
+    url = (f"https://fuyao.aicubes.cn/api/fund/market/historical"
+           f"?thscode={thscode}&interval=1d&start={start_ms}&end={end_ms}&adjust=null")
+    obj = json.loads(fetch(url, headers={'X-api-key': key}))
+    if obj.get('code') != 0:
+        raise ValueError(f"ths historical err {thscode}: {obj.get('message')}")
+    bars = obj.get('data', {}).get('item') or []
+    if not bars:
+        raise ValueError('empty ths bars for ' + thscode)
+    dates, opens, closes, highs, lows = [], [], [], [], []
+    for b in bars:
+        dt = datetime.datetime.fromtimestamp(b['date_ms'] / 1000)
+        dates.append(dt.strftime('%Y-%m-%d'))
+        opens.append(float(b['open_price'])); closes.append(float(b['close_price']))
+        highs.append(float(b['high_price'])); lows.append(float(b['low_price']))
+    if ktype == 'week':
+        return day_to_week(dates, opens, highs, lows, closes)
+    return dates, opens, highs, lows, closes
+
+def get_quotes_ths(codes):
+    """同花顺场内基金行情快照（/api/fund/market/snapshot），返回与 get_quotes 兼容的结构。"""
+    key = get_fuyao_key()
+    if not key:
+        raise RuntimeError('no fuyao key')
+    out = {}
+    for code in codes:
+        thscode = to_thscode(code)
+        url = f"https://fuyao.aicubes.cn/api/fund/market/snapshot?thscode={thscode}"
+        try:
+            obj = json.loads(fetch(url, headers={'X-api-key': key}))
+            it = obj.get('data', {}).get('item') or []
+            if it:
+                b = it[0]
+                out[to_tencent(code)] = {
+                    'name': '', 'price': float(b.get('last_price') or 0),
+                    'prevClose': float(b.get('prev_price') or 0), 'time': ''
+                }
+        except Exception:
+            pass
+        time.sleep(0.12)   # 客户端节流，避免触发上游限流
+    return out
 
 def get_kline_em(code, ktype='day'):
     """东方财富 K 线（沙箱/本地均可直连，作为主源）。返回 (dates, opens, highs, lows, closes)。"""
@@ -104,9 +194,9 @@ def get_kline_tx(code, ktype='day'):
     return dates, opens, highs, lows, closes
 
 def get_kline(code, ktype='day'):
-    """优先东方财富，失败回退腾讯。"""
+    """优先同花顺（主源），失败回退东方财富，再回退腾讯。"""
     last = None
-    for fn in (get_kline_em, get_kline_tx):
+    for fn in (get_kline_ths, get_kline_em, get_kline_tx):
         for attempt in range(2):
             try:
                 return fn(code, ktype)
@@ -154,6 +244,13 @@ def wh_live_slope(a1_prev, a2_prev, a0_last_new):
     return a1x_last, a2x_last
 
 def get_quotes(codes):
+    # 主源：同花顺场内基金快照（需 Key）；无 Key 或失败则回退腾讯行情
+    try:
+        q = get_quotes_ths(codes)
+        if q:
+            return q
+    except Exception:
+        pass
     fulls = [to_tencent(c) for c in codes]
     url = "https://qt.gtimg.cn/q=" + ",".join(fulls)
     raw = fetch(url)
