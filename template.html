@@ -129,8 +129,17 @@ function whSlopes(o,h,l,c){
   }
   return {a1, a2, s1, s2};
 }
+function todayStr(){
+  const d = new Date();
+  const p = n => (n<10?'0':'')+n;
+  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());
+}
+// 交易日判定：最新一根 K 线日期 == 今天，即今天有行情（自动排除周末/休市）
+function isTradingToday(cols){
+  return cols.length>0 && cols[cols.length-1] === todayStr();
+}
 async function build(){
-  const live = false;
+  let live = false;
   const status = document.getElementById('status');
   status.textContent = '正在拉取日线数据（' + ETF_POOL.length + ' 只）…';
   const fulls = ETF_POOL.map(e=>toTencent(e.code));
@@ -141,10 +150,12 @@ async function build(){
   const ok = kl.filter(k=>!k.error);
   let cols = [];
   if(ok.length){
-    const sets = ok.map(k=>new Set(k.dates));
-    const base = ok[0].dates;
-    cols = base.filter(d=>sets.every(s=>s.has(d))).slice(-CONFIG.COLS);
+    // 并集：任一只 ETF 有的最新交易日都保留，缺者显示 ·（避免单只缺日拖累全体少一天）
+    const allDates = new Set();
+    ok.forEach(k => k.dates.forEach(d => allDates.add(d)));
+    cols = Array.from(allDates).sort().slice(-CONFIG.COLS);
   }
+  live = isTradingToday(cols);   // 交易日默认以当前价计算最新一列
   // 周线（右侧近 WCOLS 周 A1X）
   status.textContent = '正在拉取周线数据…';
   const wkl = await Promise.all(ETF_POOL.map(async (e,i)=>{
@@ -154,9 +165,9 @@ async function build(){
   const okw = wkl.filter(k=>!k.error);
   let weekDates = [];
   if(okw.length){
-    const setsw = okw.map(k=>new Set(k.dates));
-    const basew = okw[0].dates;
-    weekDates = basew.filter(d=>setsw.every(s=>s.has(d))).slice(-CONFIG.WCOLS);
+    const allW = new Set();
+    okw.forEach(k => k.dates.forEach(d => allW.add(d)));
+    weekDates = Array.from(allW).sort().slice(-CONFIG.WCOLS);
   }
   const wkMap = {}; okw.forEach(k=>{ wkMap[k.code]=k; });
   let quotes = {};
@@ -343,29 +354,24 @@ function showErr(msg){
   document.getElementById('status').innerHTML = '<span style="color:#c22">' + msg + '</span>';
 }
 async function refresh(){
-  // 有离线快照时：先尝试在线（真实浏览器会成功），失败(如预览沙箱拦截)则回退快照
-  if(ETF_DATA){
-    try{
-      const M = await withTimeout(build(), 4000);
-      render(M);
-      return;
-    }catch(e){
-      renderSnapshot(ETF_DATA);
-      document.getElementById('status').textContent =
-        '在线拉取不可用（' + (e && e.message ? e.message : e) + '），已显示本地快照 · 抓取于 ' + ETF_DATA.asOf;
-      return;
-    }
-  }
+  // 先立即展示本地快照，保证任何环境下都有数据（无网/被拦截时也不空白）
+  if(ETF_DATA){ renderSnapshot(ETF_DATA); }
+  // 再尝试在线刷新（真实浏览器联网时成功并覆盖为最新数据）
   try{
-    const M = await build();
-    render(M);
-  }catch(e){
-    showErr('请求失败：' + (e && e.message ? e.message : e) + '。若长时间停在“加载中…”，请用真实浏览器打开 http://localhost:8137');
+    const M = await withTimeout(build(), 8000);
+    if(M && M.cols && M.cols.length){ render(M); return; }   // 在线返回空则保留快照
+  }catch(e){ /* 忽略，保留已渲染的快照 */ }
+  if(ETF_DATA){
+    document.getElementById('status').textContent =
+      '在线拉取不可用，已显示本地快照 · 抓取于 ' + ETF_DATA.asOf;
+  }else{
+    try{ const M = await build(); render(M); }
+    catch(e){ showErr('请求失败：' + (e && e.message ? e.message : e) + '。若长时间停在“加载中…”，请用真实浏览器打开'); }
   }
 }
 function forceRefresh(){
-  if(ETF_DATA){ renderSnapshot(ETF_DATA); document.getElementById('status').textContent = '本地快照 · 抓取于 ' + ETF_DATA.asOf; return; }
-  klineCache.clear(); quoteCache.clear(); refresh();
+  klineCache.clear(); quoteCache.clear();   // 清除内存缓存，强制重新在线拉取
+  refresh();
 }
 window.addEventListener('error', e => showErr('页面错误：' + (e.message||e.error)));
 window.addEventListener('unhandledrejection', e => { const r = e.reason; showErr('未捕获异常：' + (r && r.message ? r.message : r)); });
