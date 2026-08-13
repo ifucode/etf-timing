@@ -12,3 +12,4 @@ __pycache__/
 
 # 同花顺 API Key（本地专用，绝不入库）
 fuyao_key.txt
+realtime_cache.json
