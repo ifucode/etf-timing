@@ -237,6 +237,32 @@ def get_realtime_em(code):
         'name':      d.get('f58', ''),
     }
 
+def get_realtime_tx(code):
+    """腾讯实时行情（qt.gtimg.cn）——东方财富实时被限流时的盘中兜底源。
+    腾讯实时在盘中即含当日 O/H/L/C，且对多数 ETF 覆盖良好。
+    字段: f[3]=当前价 f[4]=昨收 f[5]=今开 f[33]=最高 f[34]=最低 f[1]=名称。"""
+    full = to_tencent(code)
+    url = f"https://qt.gtimg.cn/q={full}"
+    raw = fetch(url)
+    try:
+        txt = raw.encode('latin1').decode('gbk')
+    except Exception:
+        txt = raw
+    m = re.search(r'v_%s="([^"]*)"' % full, txt)
+    if not m:
+        raise ValueError('empty tx realtime for ' + code)
+    f = m.group(1).split('~')
+    if len(f) < 35 or not f[3]:
+        raise ValueError('tx realtime fields insufficient for ' + code)
+    return {
+        'open':      float(f[5]),
+        'high':      float(f[33]),
+        'low':       float(f[34]),
+        'close':     float(f[3]),
+        'prevClose': float(f[4]),
+        'name':      f[1],
+    }
+
 def get_kline(code, ktype='day'):
     """优先同花顺（主源），失败回退东方财富，再回退腾讯，最后回退新浪。"""
     last = None
