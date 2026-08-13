@@ -1,9 +1,11 @@
 name: 更新 ETF择时 看板
 
-# 触发：每个交易日收盘后自动重算 + 手动触发 + 首次推送
+# 触发：每个交易日 10:00 与 15:30（北京时间）自动重算 + 手动触发 + 首次推送
 on:
   schedule:
-    # 周一至周五 15:30 北京时间 = UTC 07:30（A股收盘后抓取）
+    # 北京时间 10:00 = UTC 02:00（盘中更新）
+    - cron: '0 2 * * 1-5'
+    # 北京时间 15:30 = UTC 07:30（收盘后更新）
     - cron: '30 7 * * 1-5'
   workflow_dispatch:        # 网页/Actions 标签手动触发
   push:
@@ -34,10 +36,30 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: 判断是否为交易日（周一至周五；可在 HOLIDAYS 补充法定节假日）
+        id: td
+        run: |
+          python - <<'PY'
+          import datetime, os
+          today = datetime.date.today()
+          # 如需排除法定节假日，在此集合补充 "YYYY-MM-DD"
+          HOLIDAYS = set()
+          is_td = today.weekday() < 5 and today.strftime('%Y-%m-%d') not in HOLIDAYS
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"run={'true' if is_td else 'false'}\n")
+          print('交易日，继续' if is_td else '非交易日，跳过')
+          PY
+
       - name: 重新抓取行情并生成矩阵
-        run: python fetch_data.py
+        if: steps.td.outputs.run == 'true'
+        env:
+          FUYAO_API_KEY: ${{ secrets.FUYAO_API_KEY }}
+        run: |
+          python fetch_data.py
+          python fill_today.py 520830 || true
 
       - name: 提交最新快照回仓库（[skip ci] 避免循环触发）
+        if: steps.td.outputs.run == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -46,10 +68,12 @@ jobs:
           git push
 
       - name: 上传 Pages 产物
+        if: steps.td.outputs.run == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
           path: '.'
 
       - name: 部署到 GitHub Pages
+        if: steps.td.outputs.run == 'true'
         id: deployment
         uses: actions/deploy-pages@v4
