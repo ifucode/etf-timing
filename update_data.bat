@@ -1,5 +1,5 @@
-@echo off
-chcp 936 >nul
+ï»¿@echo off
+chcp 65001 >nul
 cd /d "%~dp0"
 
 set "PY="
@@ -9,14 +9,14 @@ if not defined PY ( if exist "D:\ProgramData\anaconda3\python.exe" set "PY=D:\Pr
 if not defined PY ( if exist "C:\Users\iszho\.workbuddy\binaries\python\versions\3.13.12\python.exe" set "PY=C:\Users\iszho\.workbuddy\binaries\python\versions\3.13.12\python.exe" )
 if not defined PY ( if exist "C:\Users\iszho\.workbuddy\binaries\python\versions\3.11.7\python.exe" set "PY=C:\Users\iszho\.workbuddy\binaries\python\versions\3.11.7\python.exe" )
 if not defined PY (
-  echo [´íÎó] Î´ÕÒµ½ Python£¬Çë°²×° Python 3 »òÈ·ÈÏÒÑ¼ÓÈë PATH
+  echo [é”™è¯¯] æœªæ‰¾åˆ° Pythonï¼Œè¯·å®‰è£… Python 3 æˆ–ç¡®è®¤å·²åŠ å…¥ PATH
   pause
   exit /b 1
 )
 
 echo ============================================
-echo   ETF ÔñÊ±¿´°å - Ò»¼ü¸üÐÂÊý¾Ý
-echo   ÖØÐÂ×¥È¡ÐÐÇé²¢Éú³É index.html / data.json
+echo   ETF æ‹©æ—¶çœ‹æ¿ - ä¸€é”®æ›´æ–°æ•°æ®
+echo   é‡æ–°æŠ“å–è¡Œæƒ…å¹¶ç”Ÿæˆ index.html / data.json
 echo ============================================
 
 if exist fuyao_key.txt (
@@ -24,14 +24,14 @@ if exist fuyao_key.txt (
 )
 
 echo.
-echo [1/2] ×¥È¡ÐÐÇé + Éú³É¾ØÕó ...
+echo [1/2] æŠ“å–è¡Œæƒ… + ç”ŸæˆçŸ©é˜µ ...
 %PY% fetch_data.py
 
 echo.
-echo [2/2] ¶µµ×²¹ÆëÐ¡ÖÚ±êµÄµ±ÈÕ(520830) ...
+echo [2/2] å…œåº•è¡¥é½å°ä¼—æ ‡çš„å½“æ—¥(520830) ...
 %PY% fill_today.py 520830
 
 echo.
-echo Íê³É¡£index.html / data.json ÒÑ¸üÐÂ¡£
-echo °´ÈÎÒâ¼ü¹Ø±Õ´°¿Ú...
+echo å®Œæˆã€‚index.html / data.json å·²æ›´æ–°ã€‚
+echo æŒ‰ä»»æ„é”®å…³é—­çª—å£...
 pause >nul
