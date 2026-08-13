@@ -193,10 +193,54 @@ def get_kline_tx(code, ktype='day'):
     lows   = [float(r[4]) for r in rows]
     return dates, opens, highs, lows, closes
 
+def get_kline_sina(code, ktype='day'):
+    """新浪财经 K 线（备用兜底，覆盖多数 ETF；部分小众标的返回 null 则上层回退）。
+    新浪只给日线，ktype='week' 时由日线本地聚合成周线。"""
+    pre = 'sh' if code[:2] in ('51','58','56','60','68','90','11','13') else 'sz'
+    sym = pre + code
+    n = WKLINE_WEEKS if ktype == 'week' else KLINE_DAYS
+    url = (f"https://money.finance.sina.com.cn/quotes_service/api/json_v2.php"
+           f"/CN_MarketData.getKLineData?symbol={sym}&scale=240&ma=no&datalen={n}")
+    raw = fetch(url, headers={'Referer': 'https://finance.sina.com.cn'})
+    try:
+        arr = json.loads(raw)
+    except Exception:
+        arr = None
+    if not arr:
+        raise ValueError('empty sina klines for ' + sym)
+    dates  = [x['day'] for x in arr]
+    opens  = [float(x['open']) for x in arr]
+    highs  = [float(x['high']) for x in arr]
+    lows   = [float(x['low']) for x in arr]
+    closes = [float(x['close']) for x in arr]
+    if ktype == 'week':
+        return day_to_week(dates, opens, highs, lows, closes)
+    return dates, opens, highs, lows, closes
+
+def get_realtime_em(code):
+    """东方财富实时行情（push2 stock/get）——用于「当日 K 线盘中尚未发布」时，
+    用实时价合成当日最后一根：open/high/low/close/prevClose（已 ÷1000 还原为真实价格）。
+    对同花顺/腾讯/Sina 都不收录的小众标的（如 520830 沙特ETF）是唯一可用实时源。"""
+    market = '1' if code[:2] in ('51','58','56','60','68','90','11','13') else '0'
+    url = (f"https://push2.eastmoney.com/api/qt/stock/get?secid={market}.{code}"
+           f"&fields=f43,f44,f45,f46,f57,f58,f60")
+    obj = json.loads(fetch(url))
+    d = (obj or {}).get('data') or {}
+    if not d or d.get('f43') is None:
+        raise ValueError('empty em realtime for ' + code)
+    return {
+        'open':      d['f46'] / 1000.0,
+        'high':      d['f44'] / 1000.0,
+        'low':       d['f45'] / 1000.0,
+        'close':     d['f43'] / 1000.0,
+        'prevClose': d['f60'] / 1000.0,
+        'name':      d.get('f58', ''),
+    }
+
 def get_kline(code, ktype='day'):
-    """优先同花顺（主源），失败回退东方财富，再回退腾讯。"""
+    """优先同花顺（主源），失败回退东方财富，再回退腾讯，最后回退新浪。"""
     last = None
-    for fn in (get_kline_ths, get_kline_em, get_kline_tx):
+    for fn in (get_kline_ths, get_kline_em, get_kline_tx, get_kline_sina):
         for attempt in range(2):
             try:
                 return fn(code, ktype)
