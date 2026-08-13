@@ -47,6 +47,24 @@ def iso_week_key(datestr):
     wk = datetime.date(y, m, dd).isocalendar().week
     return f"{y}-W{wk:02d}"
 
+def is_weekend(datestr):
+    """判断 datestr (YYYY-MM-DD) 是否为周六或周日。"""
+    y, m, dd = int(datestr[:4]), int(datestr[5:7]), int(datestr[8:10])
+    return datetime.date(y, m, dd).weekday() >= 5
+
+def sanitize_kline(dates, o, h, l, c):
+    """清洗 K 线：删除周六/周日 bar（国内数据源对 ETF 的周末 bar 是脏数据，
+    会导致交易日列错位）。返回清洗后的 (dates, o, h, l, c)。"""
+    out = [(d, o[i], h[i], l[i], c[i]) for i, d in enumerate(dates) if not is_weekend(d)]
+    if not out:
+        raise ValueError('all bars are weekend after sanitize')
+    d2, o2, h2, l2, c2 = zip(*out)
+    return list(d2), list(o2), list(h2), list(l2), list(c2)
+
+def has_weekend(dates):
+    """检查日期序列是否包含周末 bar。"""
+    return any(is_weekend(d) for d in dates)
+
 def fetch(url, retries=3, headers=None):
     last = None
     h = {'User-Agent':'Mozilla/5.0'}
@@ -264,12 +282,18 @@ def get_realtime_tx(code):
     }
 
 def get_kline(code, ktype='day'):
-    """优先同花顺（主源），失败回退东方财富，再回退腾讯，最后回退新浪。"""
+    """优先同花顺（主源），失败回退东方财富，再回退腾讯，最后回退新浪。
+    对每源返回结果做质量门：若包含周末 bar（数据源异常导致日期错位），
+    视为失败并回退到更干净的源；最终返回前再清洗一次周末。"""
     last = None
     for fn in (get_kline_ths, get_kline_em, get_kline_tx, get_kline_sina):
         for attempt in range(2):
             try:
-                return fn(code, ktype)
+                dates, o, h, l, c = fn(code, ktype)
+                # 质量门：周末 bar 是脏数据，直接拒绝该源
+                if has_weekend(dates):
+                    raise ValueError(f'{fn.__name__} returns weekend bars for {code}')
+                return sanitize_kline(dates, o, h, l, c)
             except Exception as e:
                 last = e
                 time.sleep(0.3 * (attempt + 1))
