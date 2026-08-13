@@ -9,9 +9,6 @@ __pycache__/
 
 # 本地日志
 *.log
-# 明文凭据/密钥（切勿入库）
-tokens.txt
-*.token
-*.pat
-.env
-.secret*
+
+# 同花顺 API Key（本地专用，绝不入库）
+fuyao_key.txt
