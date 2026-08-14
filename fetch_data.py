@@ -73,7 +73,7 @@ def fetch(url, retries=3, headers=None):
     for i in range(retries):
         try:
             req = urllib.request.Request(url, headers=h)
-            with urllib.request.urlopen(req, timeout=20) as r:
+            with urllib.request.urlopen(req, timeout=10) as r:
                 raw = r.read().decode('utf-8','ignore')
             return raw
         except Exception as e:
@@ -468,7 +468,8 @@ def main():
             'weekMoms': week_moms, 'weekLatest': week_latest,
         })
 
-    as_of = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
+    # 显式使用北京时间（UTC+8），不依赖运行环境本地时区，避免 CI(UTC) 跨日取到昨天
+    as_of = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime('%Y-%m-%d %H:%M:%S')
     data = {'asOf': as_of, 'tradeDates': trade_dates, 'weekDates': week_dates, 'rows': rows}
 
     with open('data.json', 'w', encoding='utf-8') as f:
