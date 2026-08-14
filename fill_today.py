@@ -20,7 +20,8 @@ else:
     codes = args or ['520830']
     print(f"[fill_today] 模式=指定 {codes}")
 
-today = datetime.date.today().strftime('%Y-%m-%d')
+# 显式使用北京时间（UTC+8），不依赖运行环境本地时区，避免 CI(UTC) 跨日取到昨天
+today = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime('%Y-%m-%d')
 name_of = {c: n for c, n, _ in POOL}
 
 with open('data.json', encoding='utf-8') as f:
@@ -138,7 +139,7 @@ order = {c: i for i, (c, *_ ) in enumerate(POOL)}
 rows.sort(key=lambda r: order.get(r['code'], 999))
 data['rows'] = rows
 data['tradeDates'] = trade_dates
-data['asOf'] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
+data['asOf'] = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime('%Y-%m-%d %H:%M:%S')
 
 with open('data.json', 'w', encoding='utf-8') as f:
     json.dump(data, f, ensure_ascii=False, indent=1)
