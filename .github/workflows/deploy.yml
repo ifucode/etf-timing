@@ -43,7 +43,9 @@ jobs:
         run: |
           python - <<'PY'
           import datetime, os
-          today = datetime.date.today()
+          # 显式使用北京时间（UTC+8）判断交易日，避免 CI(UTC) 跨日误判
+          tz_bj = datetime.timezone(datetime.timedelta(hours=8))
+          today = datetime.datetime.now(tz_bj).date()
           # 如需排除法定节假日，在此集合补充 "YYYY-MM-DD"
           HOLIDAYS = set()
           is_td = today.weekday() < 5 and today.strftime('%Y-%m-%d') not in HOLIDAYS
