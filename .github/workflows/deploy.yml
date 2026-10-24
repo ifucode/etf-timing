@@ -72,12 +72,11 @@ jobs:
           git push
 
       - name: 上传 Pages 产物
-        if: steps.td.outputs.run == 'true'
+        # 始终部署：push / 手动触发（含周末改代码）立即上线；行情重抓仍仅在交易日
         uses: actions/upload-pages-artifact@v3
         with:
           path: '.'
 
       - name: 部署到 GitHub Pages
-        if: steps.td.outputs.run == 'true'
         id: deployment
         uses: actions/deploy-pages@v4
